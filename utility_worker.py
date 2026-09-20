@@ -128,6 +128,18 @@ def media_info(info):
     duration = info.get('duration')
     if info.get('_type') in ('playlist', 'multi_video') or info.get('is_live') or info.get('has_drm'):
         raise ValueError('PLAYLIST_LIVE_OR_DRM_UNSUPPORTED')
+    formats = info.get('formats') or [info]
+    if len(formats) == 1 and (duration is None or not formats[0].get('height')):
+        direct = formats[0]
+        media_url = direct.get('url')
+        if media_url and direct.get('ext') in ('mp4', 'webm', 'mov', 'mkv'):
+            validate_url(media_url)
+            checked = probe(media_url)
+            info['duration'] = duration = checked['duration']
+            direct.update(width=checked['width'], height=checked['height'], fps=checked['fps'])
+            direct.setdefault('vcodec', 'unknown')
+            direct.setdefault('acodec', 'unknown' if checked['audio'] else 'none')
+            direct.setdefault('format_id', 'source')
     if not isinstance(duration, (int, float)) or not math.isfinite(duration) or not 0 < duration <= MAX_SECONDS:
         raise ValueError('DURATION_LIMIT_OR_UNKNOWN')
     return info
@@ -253,9 +265,25 @@ def main():
         else: raise ValueError('INPUT_FILE_REQUIRED')
         manifest(args.output, result)
         print(json.dumps({'ok': True, 'kind': args.kind}))
-    except Exception:
+    except Exception as error:
         # Do not expose source URL, transcript, local path or model response in public logs.
-        print(json.dumps({'ok': False, 'code': 'UTILITY_PROCESSING_FAILED'}))
+        message = str(error).lower()
+        code = 'UTILITY_PROCESSING_FAILED'
+        if isinstance(error, ValueError) and re.fullmatch('[A-Z_]+', str(error)):
+            code = str(error)
+        elif 'sign in' in message or 'not a bot' in message or 'login' in message:
+            code = 'PROVIDER_LOGIN_OR_BOT_CHECK'
+        elif 'unsupported url' in message:
+            code = 'PROVIDER_NOT_SUPPORTED'
+        elif 'unavailable' in message or 'private video' in message or 'removed' in message:
+            code = 'VIDEO_UNAVAILABLE'
+        elif '403' in message:
+            code = 'PROVIDER_ACCESS_DENIED'
+        elif '429' in message:
+            code = 'PROVIDER_RATE_LIMITED'
+        elif 'certificate' in message:
+            code = 'PROVIDER_TLS_FAILED'
+        print(json.dumps({'ok': False, 'code': code, 'type': type(error).__name__}))
         return 1
     return 0
 
