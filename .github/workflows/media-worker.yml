@@ -1,0 +1,70 @@
+name: Media worker
+run-name: Media worker · ${{ inputs.task }}
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'smoke는 합성 테스트, 나머지는 공개 영상 URL만 사용'
+        type: choice
+        options: [smoke, download, transcribe-public-video]
+        default: smoke
+        required: true
+      source_url:
+        description: '공개 영상 URL만 입력. 비밀·미공개 URL 입력 금지'
+        type: string
+        default: ''
+      language:
+        description: '음성 인식 언어'
+        type: choice
+        options: [ko, auto, en, ja, zh]
+        default: ko
+permissions:
+  contents: read
+jobs:
+  media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Install media engines
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          python -m pip install -r requirements.txt
+      - name: Validate worker
+        run: python -m unittest -v test_utility_worker
+      - name: Execute public-media job
+        env:
+          YM_TASK: ${{ inputs.task }}
+          YM_SOURCE_URL: ${{ inputs.source_url }}
+          YM_LANGUAGE: ${{ inputs.language }}
+        run: |
+          python - <<'PY'
+          import os, subprocess, sys
+          task=os.environ['YM_TASK']
+          if task == 'smoke':
+              commands=[['python','utility_worker.py','smoke']]
+          elif task == 'download':
+              commands=[['python','utility_worker.py','download']]
+          elif task == 'transcribe-public-video':
+              commands=[['python','utility_worker.py','download','--output','source'],
+                        ['python','utility_worker.py','transcribe','--input','source/video.mp4','--language',os.environ['YM_LANGUAGE']]]
+          else:
+              sys.exit('Unsupported task')
+          for command in commands:
+              subprocess.run(command,check=True)
+          PY
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: utility-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/
+          retention-days: 1
+          if-no-files-found: error
