@@ -59,7 +59,9 @@ def probe(path):
     streams = data.get('streams', [])
     video = next((s for s in streams if s.get('codec_type') == 'video'), {})
     return {'duration': duration, 'width': video.get('width', 0), 'height': video.get('height'), 'fps': frame_rate(video.get('avg_frame_rate')), 
-            'audio': any(s.get('codec_type') == 'audio' for s in streams)}
+            'audio': any(s.get('codec_type') == 'audio' for s in streams),
+            'videoCodec': video.get('codec_name'),
+            'audioCodec': next((s.get('codec_name') for s in streams if s.get('codec_type') == 'audio'), None)}
 
 
 def timestamp(seconds, separator=','):
@@ -137,9 +139,9 @@ def media_info(info):
             checked = probe(media_url)
             info['duration'] = duration = checked['duration']
             direct.update(width=checked['width'], height=checked['height'], fps=checked['fps'])
-            direct.setdefault('vcodec', 'unknown')
-            direct.setdefault('acodec', 'unknown' if checked['audio'] else 'none')
-            direct.setdefault('format_id', 'source')
+            direct['vcodec'] = direct.get('vcodec') or checked['videoCodec'] or 'none'
+            direct['acodec'] = direct.get('acodec') or checked['audioCodec'] or 'none'
+            direct['format_id'] = direct.get('format_id') or 'source'
     if not isinstance(duration, (int, float)) or not math.isfinite(duration) or not 0 < duration <= MAX_SECONDS:
         raise ValueError('DURATION_LIMIT_OR_UNKNOWN')
     return info

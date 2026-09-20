@@ -38,6 +38,17 @@ class WorkerTests(unittest.TestCase):
                      {'duration': 1, 'has_drm': True}, {'duration': 1, '_type': 'playlist'}]:
             with self.assertRaises(ValueError): worker.media_info(info)
 
+    def test_direct_media_with_null_metadata(self):
+        info = {'url': 'https://example.com/video.mp4', 'ext': 'mp4', 'format_id': 'mp4',
+                'vcodec': None, 'acodec': None, 'duration': None, 'width': None, 'height': None}
+        with patch.object(worker, 'validate_url'), patch.object(worker, 'probe', return_value={
+                'width': 320, 'height': 176, 'duration': 10, 'fps': 25, 'audio': True,
+                'videoCodec': 'h264', 'audioCodec': 'aac'}):
+            worker.media_info(info)
+        f = worker.formats_of(info)[0]
+        self.assertEqual((f['width'], f['height'], f['fps'], f['audio']), (320, 176, 25, True))
+        self.assertEqual(worker.choose_format(info, 'mp4'), 'mp4')
+
     def test_time_and_korean(self):
         self.assertEqual(worker.timestamp(59.9996), '00:01:00,000')
         with tempfile.TemporaryDirectory() as temp:
