@@ -1,18 +1,26 @@
 name: Media worker
-run-name: Media worker · ${{ inputs.task }}
+run-name: Utility ${{ inputs.request_id }} · ${{ inputs.task }}
 on:
   workflow_dispatch:
     inputs:
       task:
-        description: 'smoke는 합성 테스트, 나머지는 공개 영상 URL만 사용'
+        description: '공개 영상 처리. 미공개 파일 및 비밀 URL 입력 금지'
         type: choice
-        options: [smoke, download, transcribe-public-video]
+        options: [smoke, analyze, download, transcribe-public-video]
         default: smoke
         required: true
       source_url:
-        description: '공개 영상 URL만 입력. 비밀·미공개 URL 입력 금지'
+        description: '공개 HTTPS 영상 URL'
         type: string
         default: ''
+      request_id:
+        description: 'MISO 작업 식별자 (개인정보 입력 금지)'
+        type: string
+        default: manual
+      format_id:
+        description: 'best 또는 분석에서 확인한 format ID'
+        type: string
+        default: best
       language:
         description: '음성 인식 언어'
         type: choice
@@ -35,10 +43,15 @@ jobs:
         with:
           node-version: '22'
       - name: Install media engines
+        env:
+          YM_TASK: ${{ inputs.task }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
-          python -m pip install -r requirements.txt
+          python -m pip install yt-dlp==2026.8.19
+          if [ "$YM_TASK" = "transcribe-public-video" ]; then
+            python -m pip install faster-whisper==1.2.1
+          fi
       - name: Validate worker
         run: python -m unittest -v test_utility_worker
       - name: Execute public-media job
@@ -46,25 +59,26 @@ jobs:
           YM_TASK: ${{ inputs.task }}
           YM_SOURCE_URL: ${{ inputs.source_url }}
           YM_LANGUAGE: ${{ inputs.language }}
+          YM_FORMAT: ${{ inputs.format_id }}
         run: |
           python - <<'PY'
           import os, subprocess, sys
+          from pathlib import Path
           task=os.environ['YM_TASK']
-          if task == 'smoke':
-              commands=[['python','utility_worker.py','smoke']]
-          elif task == 'download':
-              commands=[['python','utility_worker.py','download']]
+          if task in ('smoke', 'analyze', 'download'):
+              subprocess.run(['python','utility_worker.py',task,'--format-id',os.environ['YM_FORMAT']],check=True)
           elif task == 'transcribe-public-video':
-              commands=[['python','utility_worker.py','download','--output','source'],
-                        ['python','utility_worker.py','transcribe','--input','source/video.mp4','--language',os.environ['YM_LANGUAGE']]]
+              subprocess.run(['python','utility_worker.py','download','--output','source','--format-id',os.environ['YM_FORMAT']],check=True)
+              videos=list(Path('source').glob('video.*'))
+              if len(videos)!=1: sys.exit('Source missing')
+              subprocess.run(['python','utility_worker.py','transcribe','--input',str(videos[0]),'--language',os.environ['YM_LANGUAGE']],check=True)
           else:
               sys.exit('Unsupported task')
-          for command in commands:
-              subprocess.run(command,check=True)
           PY
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: utility-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/
+          compression-level: 0
           retention-days: 1
           if-no-files-found: error
